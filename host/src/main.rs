@@ -3,6 +3,13 @@
 use methods::{METHOD_ELF, METHOD_ID};
 use risc0_zkvm::{default_prover, ExecutorEnv};
 
+use sha2::{Digest, Sha512_256};
+use std::io::Write;
+
+
+use clap::Parser;
+use txoutset::{ComputeAddresses, Dump};
+
 use std::str::FromStr;
 use std::vec;
 
@@ -19,6 +26,10 @@ use bitcoin::{
     transaction, Address, Amount, Network, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut,
     Txid, Witness,
 };
+use bitcoin::consensus::encode::serialize;
+use rustreexo::accumulator::pollard::Pollard;
+use serde::Serialize;
+
 const DUMMY_UTXO_AMOUNT: Amount = Amount::from_sat(20_000_000);
 const SPEND_AMOUNT: Amount = Amount::from_sat(5_000_000);
 const CHANGE_AMOUNT: Amount = Amount::from_sat(14_999_000); // 1000 sat fee.
@@ -55,12 +66,159 @@ fn dummy_unspent_transaction_output<C: Verification>(
     (out_point, utxo)
 }
 
+/// Parse the UTXO set dump file and output each entry as CSV
+///
+/// Each line of the output has the following columns:
+///
+/// - Out Point (txid:vout)
+/// - Is Coinbase (0 - no, 1 - yes)
+/// - Block Height
+/// - Amount (satoshis)
+/// - Script Public Key
+/// - [optional] Address (specify -a)
+#[derive(Debug, Parser)]
+#[command(verbatim_doc_comment)]
+struct Args {
+    /// File containing the results of Bitcoin Core RPC `dumptxoutset`
+    file: String,
+    /// Compute addresses for each script pubkey
+    #[arg(short, long, default_value_t = false)]
+    addresses: bool,
+    /// Check that the file exists and print simple metadata about the snapshot
+    #[arg(short, long, default_value_t = false)]
+    check: bool,
+}
+
 fn main() {
     // Initialize tracing. In order to view logs, run `RUST_LOG=info cargo run`
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::filter::EnvFilter::from_default_env())
         .init();
 
+    let args = Args::parse();
+
+    let mut stdout = std::io::stdout();
+
+    let compute_addresses = if args.addresses {
+        ComputeAddresses::Yes(txoutset::Network::Bitcoin)
+    } else {
+        ComputeAddresses::No
+    };
+
+    let mut p = Pollard::new();
+    let mut last = NodeHash::empty();
+
+    match Dump::new(&args.file, compute_addresses) {
+        Ok(dump) => {
+                writeln!(
+                    stdout,
+                    "Dump opened.\n Block Hash: {}\n UTXO Set Size: {}",
+                    dump.block_hash, dump.utxo_set_size
+                );
+            if args.check {
+                return
+            }
+
+            let mut addr_str = String::new();
+            let mut i = 0;
+            let n = dump.utxo_set_size;
+            for item in dump {
+                i+=1;
+                addr_str.clear();
+                use std::fmt::Write;
+
+                if i%1000 == 0 {
+                    println!("{}/{}",i,n);
+                }
+
+                if i == 100000 {
+                    break;
+                }
+
+
+                match (args.addresses, item.address) {
+                    (true, Some(address)) => {
+                        let _ = write!(addr_str, ",{}", address);
+                    }
+                    (true, None) => {
+                        let _ = write!(addr_str, ",");
+                    }
+                    (false, _) => {}
+                }
+
+                //let r = writeln!(
+                //    stdout,
+                //    "{},{},{},{},{}{}",
+                //    item.out_point,
+                //    u8::from(item.is_coinbase),
+                //    item.height,
+                //    u64::from(item.amount),
+                //    hex::encode(item.script_pubkey.as_bytes()),
+                //    addr_str
+                //);
+                //if let Err(e) = r {
+                //    if matches!(e.kind(), std::io::ErrorKind::BrokenPipe) {
+                //        break;
+                //    }
+                //}
+                let header_code: u32 = if item.is_coinbase {
+                    (item.height << 1 ) | 1
+                } else {
+                    item.height << 1
+                };
+
+                let mut hasher = Sha512_256::new();
+                hasher.update(b"<todo:blockhash>");
+                hasher.update(item.out_point.txid);
+                hasher.update(item.out_point.vout.to_le_bytes());
+                hasher.update(header_code.to_le_bytes());
+                let txout = TxOut{
+                    value: item.amount.into(),
+                    script_pubkey: item.script_pubkey,
+                };
+
+                // Serialize the TxOut using bitcoin::consensus::encode::serialize
+                let serialized_txout = serialize(&txout);
+
+                // Feed the serialized bytes into the hasher
+                hasher.update(&serialized_txout);
+
+                let result = hasher.finalize();
+                let hash = NodeHash::from_str(hex::encode(result).as_str()).unwrap();
+                p.modify(&[hash], &[]).unwrap();
+                last = hash;
+            }
+            //Ok(())
+        }
+        Err(e) => {
+            writeln!(std::io::stderr(), "{}: {}", e, args.file);
+            return;
+        }
+    }
+
+    let proof = p.prove(&[last]).unwrap();
+    assert_eq!(p.verify(&proof, &[]), Ok(true));
+    println!("proof verified");
+
+    let roots = p.get_roots()
+        .iter()
+        .map(|root| root.get_data())
+        .collect::<Vec<_>>();
+
+    let s = Stump{
+        roots,
+        leaves: p.leaves,
+    };
+
+    assert_eq!(s.verify(&proof, &[]), Ok(true));
+    println!("stump proof verified");
+
+    //println!("{:#?}", p);
+    // TODO: do proof verification in ZK
+    // TODO: load utxo set, add dummy txout we have the private key for at the end
+    // Then try to make proof of signature
+
+    /*
     let secp = Secp256k1::new();
 
     // Get a keypair we control. In a real application these would come from a stored secret.
@@ -120,32 +278,32 @@ fn main() {
     let signature = secp.sign_schnorr(&msg, &tweaked.to_inner());
 
     // Update the witness stack.
-    let signature = bitcoin::taproot::Signature {
-        signature,
-        sighash_type,
-    };
-    sighasher
-        .witness_mut(input_index)
-        .unwrap()
-        .push(&signature.to_vec());
-
-    // Get the signed transaction.
-    let tx = sighasher.into_transaction();
-
-    // Verify the signature
-    let pubkey = tweaked.to_inner().x_only_public_key().0;
-    let is_valid = secp
-        .verify_schnorr(&signature.signature, &msg, &pubkey)
-        .is_ok();
-
-    if is_valid {
-        println!("Signature is valid!");
-    } else {
-        println!("Signature is invalid!");
-    }
-
-    // BOOM! Transaction signed and ready to broadcast.
-    println!("{:#?}", tx);
+    //let signature = bitcoin::taproot::Signature {
+    //    signature,
+    //    sighash_type,
+    //};
+//    sighasher
+//        .witness_mut(input_index)
+//        .unwrap()
+//        .push(&signature.to_vec());
+//
+//    // Get the signed transaction.
+//    let tx = sighasher.into_transaction();
+//
+//    // Verify the signature
+//    let pubkey = tweaked.to_inner().x_only_public_key().0;
+//    let is_valid = secp
+//        .verify_schnorr(&signature.signature, &msg, &pubkey)
+//        .is_ok();
+//
+//    if is_valid {
+//        println!("Signature is valid!");
+//    } else {
+//        println!("Signature is invalid!");
+//    }
+//
+//    // BOOM! Transaction signed and ready to broadcast.
+//    println!("{:#?}", tx);
 
     //-------------------------------------------
     // These are the utxos that we want to add to the Stump, in Bitcoin, these would be the
@@ -193,12 +351,12 @@ fn main() {
     // To access this method, you'll need to use ExecutorEnv::builder(), which
     // creates an ExecutorEnvBuilder. When you're done adding input, call
     // ExecutorEnvBuilder::build().
-
+*/
     // For example:
     let input: u32 = 15 * u32::pow(2, 27) + 1;
     let env = ExecutorEnv::builder()
-        .write(&s0).unwrap()
-        .write(&utxos[0]).unwrap()
+        .write(&s).unwrap()
+        //.write(&utxos[0]).unwrap()
         .write(&proof).unwrap()
         //.write(&signature).unwrap()
         //.write(&sighash).unwrap()
@@ -220,6 +378,7 @@ fn main() {
     // For example:
     let _output: Stump = receipt.journal.decode().unwrap();
     println!("journal: {:?}", _output);
+    println!("stumps equal: {}", _output == s);
 
     let receipt_bytes = bincode::serialize(&receipt).unwrap();
     println!("receipt ({}): {}", receipt_bytes.len(), hex::encode(receipt_bytes));
