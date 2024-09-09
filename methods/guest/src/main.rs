@@ -31,7 +31,7 @@ fn main() {
 
     // read the input
     let s: Stump = env::read();
-  //  let utxo: NodeHash = env::read();
+    let utxo: NodeHash = env::read();
     let proof: Proof = env::read();
     //let signature: bitcoin::taproot::Signature = env::read();
     //let sighash: TapSighash = env::read();
@@ -70,7 +70,7 @@ fn main() {
     //    .0;
     // Create a proof that the first utxo is in the Stump.
     //let proof = Proof::new(vec![0], vec![utxos[1]]);
-    assert_eq!(s.verify(&proof, &[]), Ok(true));
+    assert_eq!(s.verify(&proof, &[utxo]), Ok(true));
 
     // Now we want to update the Stump, by removing the first utxo, and adding a new one.
     // This would be in case we received a new block with a transaction spending the first utxo,

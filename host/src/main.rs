@@ -130,7 +130,7 @@ fn main() {
                     println!("{}/{}", i, n);
                 }
 
-                if i == 100000 {
+                if i == 1000000 {
                     break;
                 }
 
@@ -194,9 +194,32 @@ fn main() {
         }
     }
 
-    let proof = p.prove(&[last]).unwrap();
-    assert_eq!(p.verify(&proof, &[]), Ok(true));
-    println!("proof verified");
+    // Get a keypair we control. In a real application these would come from a stored secret.
+    let secp = Secp256k1::new();
+    let keypair = senders_keys(&secp);
+    let (internal_key, _parity) = keypair.x_only_public_key();
+
+    // Get an unspent output that is locked to the key above that we control.
+    // In a real application these would come from the chain.
+    let (dummy_out_point, dummy_utxo) = dummy_unspent_transaction_output(&secp, internal_key);
+    let header_code: u32 = 666666 << 1;
+
+    let mut hasher = Sha512_256::new();
+    hasher.update(b"<todo:blockhash>");
+    hasher.update(dummy_out_point.txid);
+    hasher.update(dummy_out_point.vout.to_le_bytes());
+    hasher.update(header_code.to_le_bytes());
+    let serialized_txout = serialize(&dummy_utxo);
+
+    // Feed the serialized bytes into the hasher
+    hasher.update(&serialized_txout);
+
+    let result = hasher.finalize();
+    let myhash = NodeHash::from_str(hex::encode(result).as_str()).unwrap();
+    println!("inserting {}", myhash);
+
+    p.modify(&[myhash], &[]).unwrap();
+    println!("{:#?}", p);
 
     let roots = p
         .get_roots()
@@ -209,10 +232,14 @@ fn main() {
         leaves: p.leaves,
     };
 
-    assert_eq!(s.verify(&proof, &[]), Ok(true));
-    println!("stump proof verified");
+    println!("proving {}", myhash);
+    let proof = p.prove(&[myhash]).unwrap();
+    println!("proof2: {:?}", proof);
+    assert_eq!(p.verify(&proof, &[myhash]), Ok(true));
+    println!("pollard p-verified");
 
-    //println!("{:#?}", p);
+    assert_eq!(s.verify(&proof, &[myhash]), Ok(true));
+    println!("stump proof verified");
     // TODO: do proof verification in ZK
     // TODO: load utxo set, add dummy txout we have the private key for at the end
     // Then try to make proof of signature
@@ -355,6 +382,8 @@ fn main() {
     let input: u32 = 15 * u32::pow(2, 27) + 1;
     let env = ExecutorEnv::builder()
         .write(&s)
+        .unwrap()
+        .write(&myhash)
         .unwrap()
         //.write(&utxos[0]).unwrap()
         .write(&proof)
