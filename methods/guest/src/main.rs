@@ -11,8 +11,10 @@ use bitcoin::XOnlyPublicKey;
 //use bitcoin::key::{Keypair, TapTweak, TweakedKeypair, UntweakedPublicKey};
 //use bitcoin::locktime::absolute;
 //use bitcoin::secp256k1::{rand, Message, Secp256k1, SecretKey, Signing, Verification};
-use bitcoin::secp256k1::{Secp256k1, Message};
+use bitcoin::secp256k1::{Secp256k1, Message, Scalar};
+use bitcoin::secp256k1::schnorr::Signature;
 use bitcoin::TapSighash;
+use bitcoin::{TapTweakHash};
 //use bitcoin::sighash::{TapSighashType};
 //use bitcoin::sighash::{Prevouts, SighashCache, TapSighashType};
 //use bitcoin::{
@@ -23,7 +25,7 @@ use bitcoin::TapSighash;
 
 fn main() {
     // TODO: Implement your guest code here
- //   let secp = Secp256k1::verification_only();
+    let secp = Secp256k1::verification_only();
 
     // TODO: take utxo set root hash, proof of inlusion,
     // verify the proof
@@ -33,6 +35,12 @@ fn main() {
     let s: Stump = env::read();
     let utxo: NodeHash = env::read();
     let proof: Proof = env::read();
+    let pubkey: XOnlyPublicKey = env::read();
+    let blinding_bytes: [u8; 32] = env::read();
+    let blinding_scalar = Scalar::from_be_bytes(blinding_bytes).unwrap();
+    let signature: Signature = env::read();
+
+    let blinded_pubkey = pubkey.add_tweak(&secp, &blinding_scalar).unwrap().0;
     //let signature: bitcoin::taproot::Signature = env::read();
     //let sighash: TapSighash = env::read();
     //let msg = Message::from_digest(sighash.to_byte_array());
@@ -88,4 +96,6 @@ fn main() {
 
     // write public output to the journal
     env::commit(&s);
+    env::commit(&signature);
+    env::commit(&blinded_pubkey);
 }

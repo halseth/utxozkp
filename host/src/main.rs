@@ -6,6 +6,9 @@ use risc0_zkvm::{default_prover, ExecutorEnv};
 use sha2::{Digest, Sha512_256};
 use std::io::Write;
 
+use bitcoin_hashes::sha256;
+use bitcoin_hashes::Hash as BitcoinHash;
+
 use clap::Parser;
 use txoutset::{ComputeAddresses, Dump};
 
@@ -17,14 +20,15 @@ use rustreexo::accumulator::proof::Proof;
 use rustreexo::accumulator::stump::Stump;
 
 use bitcoin::consensus::encode::serialize;
-use bitcoin::hashes::Hash;
+use bitcoin::hashes::{Hash, HashEngine};
 use bitcoin::key::{Keypair, TapTweak, TweakedKeypair, UntweakedPublicKey};
 use bitcoin::locktime::absolute;
-use bitcoin::secp256k1::{rand, Message, Secp256k1, SecretKey, Signing, Verification};
+use bitcoin::secp256k1::schnorr::Signature;
+use bitcoin::secp256k1::{rand, Message, Scalar, Secp256k1, SecretKey, Signing, Verification};
 use bitcoin::sighash::{Prevouts, SighashCache, TapSighashType};
 use bitcoin::{
-    transaction, Address, Amount, Network, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut,
-    Txid, Witness,
+    transaction, Address, Amount, Network, OutPoint, ScriptBuf, Sequence, TapTweakHash,
+    Transaction, TxIn, TxOut, Txid, Witness, XOnlyPublicKey,
 };
 use rustreexo::accumulator::pollard::Pollard;
 use serde::Serialize;
@@ -244,6 +248,53 @@ fn main() {
     // TODO: load utxo set, add dummy txout we have the private key for at the end
     // Then try to make proof of signature
 
+    let msg_to_sign = "I am Lars and I own the UTXO";
+    let rnd_seed = "this is the basis for random (todo:make it really random)";
+    let digest = sha256::Hash::hash(msg_to_sign.as_bytes());
+    let rnd_val = sha256::Hash::hash(rnd_seed.as_bytes());
+
+    let blinding_scalar = Scalar::from_be_bytes(rnd_val.to_byte_array()).unwrap();
+
+    //let mut eng = TapTweakHash::engine();
+    //eng.input(digest.as_byte_array());
+    //let blinding = TapTweakHash::from_engine(eng);
+
+    // let tweaked: TweakedKeypair = keypair.tap_tweak(&secp, None);
+    let blinded_key = keypair.add_xonly_tweak(&secp, &blinding_scalar).unwrap();
+
+    //let signature = secp.sign_schnorr(&msg, &tweaked.to_inner());
+    let msg = Message::from_digest(digest.to_byte_array());
+    let sig2 = secp.sign_schnorr(&msg, &blinded_key);
+
+    //let pubkey = tweaked.to_inner().x_only_public_key().0;
+    //let blinded_pubkey = blinded_key.x_only_public_key().0;
+
+    //pubkey.add_tweak(&secp, &blinding_scalar).unwrap();
+    let blinded_pubkey = keypair
+        .x_only_public_key()
+        .0
+        .add_tweak(&secp, &blinding_scalar)
+        .unwrap()
+        .0;
+
+    //let is_valid = secp
+    //    .verify_schnorr(&signature, &msg, &pubkey)
+    //    .is_ok();
+
+    //if is_valid {
+    //    println!("Signature is valid!");
+    //} else {
+    //    println!("Signature is invalid!");
+    //}
+
+    let is_valid2 = secp.verify_schnorr(&sig2, &msg, &blinded_pubkey).is_ok();
+
+    if is_valid2 {
+        println!("Signature 2 is valid!");
+    } else {
+        println!("Signature 2 is invalid!");
+    }
+
     /*
         let secp = Secp256k1::new();
 
@@ -388,6 +439,14 @@ fn main() {
         //.write(&utxos[0]).unwrap()
         .write(&proof)
         .unwrap()
+        .write(&blinded_pubkey)
+        .unwrap()
+        .write(&blinding_scalar.to_be_bytes())
+        .unwrap()
+        .write(&sig2)
+        .unwrap()
+        //.write(&signature)
+        //.unwrap()
         //.write(&signature).unwrap()
         //.write(&sighash).unwrap()
         //.write(&pubkey).unwrap()
@@ -407,15 +466,18 @@ fn main() {
     // TODO: Implement code for retrieving receipt journal here.
 
     // For example:
-    let _output: Stump = receipt.journal.decode().unwrap();
-    println!("journal: {:?}", _output);
-    println!("stumps equal: {}", _output == s);
+    let (receipt_stump, receipt_sig, receipt_pubkey): (Stump, Signature, XOnlyPublicKey) =
+        receipt.journal.decode().unwrap();
+
+    println!("stumps equal: {}", receipt_stump == s);
+    println!("sig equal: {:?}", receipt_sig == sig2);
+    println!("pubkey equal: {:?}", receipt_pubkey == blinded_pubkey);
 
     let receipt_bytes = bincode::serialize(&receipt).unwrap();
     println!(
-        "receipt ({}): {}",
+        "receipt ({})",
         receipt_bytes.len(),
-        hex::encode(receipt_bytes)
+        //hex::encode(receipt_bytes),
     );
 
     // The receipt was verified at the end of proving, but the below code is an
