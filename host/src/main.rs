@@ -19,6 +19,7 @@ use rustreexo::accumulator::node_hash::NodeHash;
 use rustreexo::accumulator::proof::Proof;
 use rustreexo::accumulator::stump::Stump;
 
+use bitcoin::address::Payload;
 use bitcoin::consensus::encode::serialize;
 use bitcoin::hashes::{Hash, HashEngine};
 use bitcoin::key::{Keypair, TapTweak, TweakedKeypair, UntweakedPublicKey};
@@ -26,12 +27,15 @@ use bitcoin::locktime::absolute;
 use bitcoin::secp256k1::schnorr::Signature;
 use bitcoin::secp256k1::{rand, Message, Scalar, Secp256k1, SecretKey, Signing, Verification};
 use bitcoin::sighash::{Prevouts, SighashCache, TapSighashType};
+use bitcoin::AddressType::P2tr;
+use bitcoin::WitnessVersion::V1;
 use bitcoin::{
-    transaction, Address, Amount, Network, OutPoint, ScriptBuf, Sequence, TapTweakHash,
-    Transaction, TxIn, TxOut, Txid, Witness, XOnlyPublicKey,
+    transaction, Address, AddressType, Amount, Network, OutPoint, ScriptBuf, Sequence,
+    TapTweakHash, Transaction, TxIn, TxOut, Txid, Witness, XOnlyPublicKey,
 };
 use rustreexo::accumulator::pollard::Pollard;
 use serde::Serialize;
+use Payload::WitnessProgram;
 
 const DUMMY_UTXO_AMOUNT: Amount = Amount::from_sat(20_000_000);
 const SPEND_AMOUNT: Amount = Amount::from_sat(5_000_000);
@@ -62,7 +66,7 @@ fn dummy_unspent_transaction_output<C: Verification>(
     };
 
     let utxo = TxOut {
-        value: DUMMY_UTXO_AMOUNT,
+        value: Amount::ZERO,
         script_pubkey,
     };
 
@@ -84,12 +88,65 @@ fn dummy_unspent_transaction_output<C: Verification>(
 struct Args {
     /// File containing the results of Bitcoin Core RPC `dumptxoutset`
     file: String,
-    /// Compute addresses for each script pubkey
+
     #[arg(short, long, default_value_t = false)]
-    addresses: bool,
-    /// Check that the file exists and print simple metadata about the snapshot
-    #[arg(short, long, default_value_t = false)]
-    check: bool,
+    testnet: bool,
+}
+
+fn create_nodehash(item: &txoutset::TxOut) -> NodeHash {
+    //let r = writeln!(
+    //    stdout,
+    //    "{},{},{},{},{}{}",
+    //    item.out_point,
+    //    u8::from(item.is_coinbase),
+    //    item.height,
+    //    u64::from(item.amount),
+    //    hex::encode(item.script_pubkey.as_bytes()),
+    //    addr_str
+    //);
+    //if let Err(e) = r {
+    //    if matches!(e.kind(), std::io::ErrorKind::BrokenPipe) {
+    //        break;
+    //    }
+    //}
+//    let header_code: u32 = if item.is_coinbase {
+//        (item.height << 1) | 1
+//    } else {
+//        item.height << 1
+//    };
+//
+   // let mut hasher = Sha512_256::new();
+   // hasher.update(b"<todo:blockhash>");
+   // hasher.update(item.out_point.txid);
+   // hasher.update(item.out_point.vout.to_le_bytes());
+   // hasher.update(header_code.to_le_bytes());
+   // let txout = TxOut {
+   //     value: item.amount.into(),
+   //     script_pubkey: item.script_pubkey.clone(),
+   // };
+
+   // // Serialize the TxOut using bitcoin::consensus::encode::serialize
+   // let serialized_txout = serialize(&txout);
+
+   // // Feed the serialized bytes into the hasher
+   // hasher.update(&serialized_txout);
+
+    let txout = TxOut {
+        value: Amount::ZERO,
+        script_pubkey: item.script_pubkey.clone(),
+    };
+
+    // Serialize the TxOut using bitcoin::consensus::encode::serialize
+    let serialized_txout = serialize(&txout);
+
+    // Feed the serialized bytes into the hasher
+    let mut hasher = Sha512_256::new();
+    hasher.update(&serialized_txout);
+
+    let result = hasher.finalize();
+    let hash = NodeHash::from_str(hex::encode(result).as_str()).unwrap();
+
+    hash
 }
 
 fn main() {
@@ -102,10 +159,10 @@ fn main() {
 
     let mut stdout = std::io::stdout();
 
-    let compute_addresses = if args.addresses {
-        ComputeAddresses::Yes(txoutset::Network::Bitcoin)
+    let compute_addresses = if args.testnet {
+        ComputeAddresses::Yes(txoutset::Network::Testnet)
     } else {
-        ComputeAddresses::No
+        ComputeAddresses::Yes(txoutset::Network::Bitcoin)
     };
 
     let mut p = Pollard::new();
@@ -118,77 +175,63 @@ fn main() {
                 "Dump opened.\n Block Hash: {}\n UTXO Set Size: {}",
                 dump.block_hash, dump.utxo_set_size
             );
-            if args.check {
-                return;
-            }
 
             let mut addr_str = String::new();
             let mut i = 0;
             let n = dump.utxo_set_size;
+            let mut num_taproot = 0;
             for item in dump {
                 i += 1;
                 addr_str.clear();
                 use std::fmt::Write;
 
-                if i % 1000 == 0 {
-                    println!("{}/{}", i, n);
+                if i % 500000 == 0 {
+                    println!(
+                        "{}/{} ({:.2}%)\ttaproot: {}/{} ({:.2}%)",
+                        i,
+                        n,
+                        100.0 * (i as f64) / (n as f64),
+                        num_taproot,
+                        i,
+                        100.0 * (num_taproot as f64) / (i as f64)
+                    );
                 }
 
                 if i == 1000000 {
                     break;
                 }
 
-                match (args.addresses, item.address) {
-                    (true, Some(address)) => {
+                match item.address {
+                    Some(ref address) => {
                         let _ = write!(addr_str, ",{}", address);
+                        let payload = address.payload();
+                        match payload {
+                            WitnessProgram(w) => {
+                                if w.version() == V1 {
+                                    //println!("{}", hex::encode(w.program()));
+                                    let hash = create_nodehash(&item);
+
+                                    p.modify(&[hash], &[]).unwrap();
+                                    last = hash;
+
+                                    num_taproot += 1;
+                                    if num_taproot % 1000 == 0 {}
+                                }
+                            }
+                            _ => {}
+                        }
+
+                        //                        match address.address_type() {
+                        //                            Some(P2tr) => {
+                        //                                println!("Address: {}", address);
+                        //                            }
+                        //                            _ => {
+                        //                                continue;
+                        //                            }
+                        //                        }
                     }
-                    (true, None) => {
-                        let _ = write!(addr_str, ",");
-                    }
-                    (false, _) => {}
+                    _ => {}
                 }
-
-                //let r = writeln!(
-                //    stdout,
-                //    "{},{},{},{},{}{}",
-                //    item.out_point,
-                //    u8::from(item.is_coinbase),
-                //    item.height,
-                //    u64::from(item.amount),
-                //    hex::encode(item.script_pubkey.as_bytes()),
-                //    addr_str
-                //);
-                //if let Err(e) = r {
-                //    if matches!(e.kind(), std::io::ErrorKind::BrokenPipe) {
-                //        break;
-                //    }
-                //}
-                let header_code: u32 = if item.is_coinbase {
-                    (item.height << 1) | 1
-                } else {
-                    item.height << 1
-                };
-
-                let mut hasher = Sha512_256::new();
-                hasher.update(b"<todo:blockhash>");
-                hasher.update(item.out_point.txid);
-                hasher.update(item.out_point.vout.to_le_bytes());
-                hasher.update(header_code.to_le_bytes());
-                let txout = TxOut {
-                    value: item.amount.into(),
-                    script_pubkey: item.script_pubkey,
-                };
-
-                // Serialize the TxOut using bitcoin::consensus::encode::serialize
-                let serialized_txout = serialize(&txout);
-
-                // Feed the serialized bytes into the hasher
-                hasher.update(&serialized_txout);
-
-                let result = hasher.finalize();
-                let hash = NodeHash::from_str(hex::encode(result).as_str()).unwrap();
-                p.modify(&[hash], &[]).unwrap();
-                last = hash;
             }
             //Ok(())
         }
@@ -197,6 +240,7 @@ fn main() {
             return;
         }
     }
+
 
     // Get a keypair we control. In a real application these would come from a stored secret.
     let secp = Secp256k1::new();
@@ -209,10 +253,10 @@ fn main() {
     let header_code: u32 = 666666 << 1;
 
     let mut hasher = Sha512_256::new();
-    hasher.update(b"<todo:blockhash>");
-    hasher.update(dummy_out_point.txid);
-    hasher.update(dummy_out_point.vout.to_le_bytes());
-    hasher.update(header_code.to_le_bytes());
+//    hasher.update(b"<todo:blockhash>");
+//    hasher.update(dummy_out_point.txid);
+//    hasher.update(dummy_out_point.vout.to_le_bytes());
+//    hasher.update(header_code.to_le_bytes());
     let serialized_txout = serialize(&dummy_utxo);
 
     // Feed the serialized bytes into the hasher
@@ -434,12 +478,12 @@ fn main() {
     let env = ExecutorEnv::builder()
         .write(&s)
         .unwrap()
-        .write(&myhash)
-        .unwrap()
+        //.write(&myhash)
+        //.unwrap()
         //.write(&utxos[0]).unwrap()
         .write(&proof)
         .unwrap()
-        .write(&blinded_pubkey)
+        .write(&internal_key)
         .unwrap()
         .write(&blinding_scalar.to_be_bytes())
         .unwrap()
@@ -472,6 +516,14 @@ fn main() {
     println!("stumps equal: {}", receipt_stump == s);
     println!("sig equal: {:?}", receipt_sig == sig2);
     println!("pubkey equal: {:?}", receipt_pubkey == blinded_pubkey);
+
+    let is_valid3 = secp.verify_schnorr(&receipt_sig, &msg, &receipt_pubkey).is_ok();
+
+    if is_valid3 {
+        println!("Signature 3 is valid!");
+    } else {
+        println!("Signature 3 is invalid!");
+    }
 
     let receipt_bytes = bincode::serialize(&receipt).unwrap();
     println!(

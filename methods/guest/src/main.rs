@@ -5,16 +5,18 @@ use risc0_zkvm::guest::env;
 use rustreexo::accumulator::node_hash::NodeHash;
 use rustreexo::accumulator::proof::Proof;
 use rustreexo::accumulator::stump::Stump;
+use sha2::{Digest, Sha512_256};
 
 use bitcoin::hashes::Hash;
 use bitcoin::XOnlyPublicKey;
+use bitcoin::consensus::encode::serialize;
 //use bitcoin::key::{Keypair, TapTweak, TweakedKeypair, UntweakedPublicKey};
 //use bitcoin::locktime::absolute;
 //use bitcoin::secp256k1::{rand, Message, Secp256k1, SecretKey, Signing, Verification};
 use bitcoin::secp256k1::{Secp256k1, Message, Scalar};
 use bitcoin::secp256k1::schnorr::Signature;
 use bitcoin::TapSighash;
-use bitcoin::{TapTweakHash};
+use bitcoin::{TapTweakHash, ScriptBuf, TxOut, Amount};
 //use bitcoin::sighash::{TapSighashType};
 //use bitcoin::sighash::{Prevouts, SighashCache, TapSighashType};
 //use bitcoin::{
@@ -33,14 +35,28 @@ fn main() {
 
     // read the input
     let s: Stump = env::read();
-    let utxo: NodeHash = env::read();
+//    let utxo: NodeHash = env::read();
     let proof: Proof = env::read();
-    let pubkey: XOnlyPublicKey = env::read();
+    let internal_key: XOnlyPublicKey = env::read();
     let blinding_bytes: [u8; 32] = env::read();
     let blinding_scalar = Scalar::from_be_bytes(blinding_bytes).unwrap();
     let signature: Signature = env::read();
 
-    let blinded_pubkey = pubkey.add_tweak(&secp, &blinding_scalar).unwrap().0;
+    let mut hasher = Sha512_256::new();
+    let script_pubkey = ScriptBuf::new_p2tr(&secp, internal_key, None);
+    let utxo = TxOut {
+        value: Amount::ZERO,
+        script_pubkey,
+    };
+
+    let serialized_txout = serialize(&utxo);
+    hasher.update(&serialized_txout);
+
+    let result = hasher.finalize();
+    let myhash = NodeHash::from_str(hex::encode(result).as_str()).unwrap();
+
+
+    let blinded_pubkey = internal_key.add_tweak(&secp, &blinding_scalar).unwrap().0;
     //let signature: bitcoin::taproot::Signature = env::read();
     //let sighash: TapSighash = env::read();
     //let msg = Message::from_digest(sighash.to_byte_array());
@@ -78,7 +94,7 @@ fn main() {
     //    .0;
     // Create a proof that the first utxo is in the Stump.
     //let proof = Proof::new(vec![0], vec![utxos[1]]);
-    assert_eq!(s.verify(&proof, &[utxo]), Ok(true));
+    assert_eq!(s.verify(&proof, &[myhash]), Ok(true));
 
     // Now we want to update the Stump, by removing the first utxo, and adding a new one.
     // This would be in case we received a new block with a transaction spending the first utxo,
