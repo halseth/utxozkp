@@ -3,3 +3,5 @@ Cargo.lock
 methods/guest/Cargo.lock
 target/
 .idea/
+receipt.bin
+stump.bin
