@@ -47,21 +47,22 @@ fn gen_keypair<C: Signing>(secp: &Secp256k1<C>) -> Keypair {
 #[command(verbatim_doc_comment)]
 struct Args {
     /// File containing the results of Bitcoin Core RPC `dumptxoutset`
-    utxoset_file: String,
+    #[arg(short, long)]
+    utxoset_file: Option<String>,
 
     #[arg(short, long, default_value_t = false)]
     prove: bool,
 
     /// File containing a receipt to verify or file to write receipt to.
     #[arg(short, long)]
-    receipt_file: String,
+    receipt_file: Option<String>,
 
     #[arg(short, long)]
-    utreexo_file: String,
+    utreexo_file: Option<String>,
 
     /// Message to sign.
     #[arg(short, long)]
-    msg: String,
+    msg: Option<String>,
 
     /// Sign the message using the given private key. Pass "new" to generate one at random. Leave
     /// this blank if verifying a receipt.
@@ -96,22 +97,56 @@ fn main() {
 
     let args = Args::parse();
 
+    let secp = Secp256k1::new();
+    let network = txoutset::Network::Testnet;
+
+    // Generate a new keypair or use the given private key.
+    let keypair = match args.priv_key.as_deref() {
+        Some(priv_str) => {
+            let keypair = if priv_str == "new" {
+                gen_keypair(&secp)
+            } else {
+                let sk = SecretKey::from_str(&priv_str).unwrap();
+                Keypair::from_secret_key(&secp, &sk)
+            };
+
+            let (internal_key, _parity) = keypair.x_only_public_key();
+            let script_buf = ScriptBuf::new_p2tr(&secp, internal_key, None);
+            let addr = Address::from_script(script_buf.as_script(), network).unwrap();
+            println!("priv: {}", hex::encode(keypair.secret_key().secret_bytes()));
+            println!("pub: {}", internal_key);
+            println!("address: {}", addr);
+
+            if priv_str == "new" {
+                return;
+            }
+
+            Some(keypair)
+        }
+        _ => {
+            if args.prove {
+                println!("priv key needed");
+                return;
+            }
+            None
+        }
+    };
+
     let (receipt_file, stump_file) = if args.prove {
-        let r = File::create(args.receipt_file).unwrap();
-        let s = File::create(args.utreexo_file).unwrap();
+        let r = File::create(args.receipt_file.unwrap()).unwrap();
+        let s = File::create(args.utreexo_file.unwrap()).unwrap();
         (r, s)
     } else {
-        let r = File::open(args.receipt_file).unwrap();
-        let s = File::open(args.utreexo_file).unwrap();
+        let r = File::open(args.receipt_file.unwrap()).unwrap();
+        let s = File::open(args.utreexo_file.unwrap()).unwrap();
         (r, s)
     };
 
-    let msg_to_sign = args.msg;
+    let msg_to_sign = args.msg.unwrap();
     let digest = sha256::Hash::hash(msg_to_sign.as_bytes());
     let msg = Message::from_digest(digest.to_byte_array());
 
-    // If not proving, simply verift the passed receipt using the loaded utxo set.
-    let secp = Secp256k1::new();
+    // If not proving, simply verify the passed receipt using the loaded utxo set.
     if !args.prove {
         let receipt: Receipt = bincode::deserialize_from(receipt_file).unwrap();
         let s: Stump = bincode::deserialize_from(stump_file).unwrap();
@@ -120,29 +155,12 @@ fn main() {
         return;
     }
 
-    let network = txoutset::Network::Testnet;
-
-    // Generate a new keypair or use the given private key.
-    let priv_str = args.priv_key.unwrap();
-    let keypair = if priv_str == "new" {
-        gen_keypair(&secp)
-    } else {
-        let sk = SecretKey::from_str(&priv_str).unwrap();
-        Keypair::from_secret_key(&secp, &sk)
-    };
-
-    let (internal_key, _parity) = keypair.x_only_public_key();
-    let script_buf = ScriptBuf::new_p2tr(&secp, internal_key, None);
-    let addr = Address::from_script(script_buf.as_script(), network).unwrap();
-    println!("priv: {}", hex::encode(keypair.secret_key().secret_bytes()));
-    println!("pub: {}", internal_key);
-    println!("address: {}", addr);
 
     // Our Utreexo accumulator.
     let mut p = Pollard::new();
 
     let compute_addresses = ComputeAddresses::Yes(network);
-    match Dump::new(&args.utxoset_file, compute_addresses) {
+    match Dump::new(&args.utxoset_file.unwrap(), compute_addresses) {
         Ok(dump) => {
             println!(
                 "Dump opened.\n Block Hash: {}\n UTXO Set Size: {}",
@@ -188,7 +206,7 @@ fn main() {
             }
         }
         Err(e) => {
-            _ = writeln!(std::io::stderr(), "{}: {}", e, args.utxoset_file);
+            _ = writeln!(std::io::stderr(), "{}", e);
             return;
         }
     }
@@ -206,6 +224,7 @@ fn main() {
     };
 
     // We will prove inclusion in the UTXO set of the key we control.
+    let (internal_key, _parity) = keypair.unwrap().x_only_public_key();
     let script_pubkey = ScriptBuf::new_p2tr(&secp, internal_key, None);
     let myhash = create_nodehash(script_pubkey);
 
@@ -220,7 +239,7 @@ fn main() {
     // To avoid leaking the key we are signing for, we tweak it using a random value.
     let rnd = SecretKey::new(&mut rand::thread_rng());
     let blinding_scalar = Scalar::from_be_bytes(rnd.secret_bytes()).unwrap();
-    let blinded_key = keypair.add_xonly_tweak(&secp, &blinding_scalar).unwrap();
+    let blinded_key = keypair.unwrap().add_xonly_tweak(&secp, &blinding_scalar).unwrap();
 
     // Sign using the tweaked key.
     let sig = secp.sign_schnorr(&msg, &blinded_key);
