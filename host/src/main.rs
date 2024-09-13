@@ -5,7 +5,7 @@ use methods::{METHOD_ELF, METHOD_ID};
 use risc0_zkvm::{default_prover, ExecutorEnv, Receipt};
 
 use sha2::{Digest, Sha512_256};
-use std::io::{Read, Write};
+use std::io::Write;
 
 use bitcoin_hashes::sha256;
 use bitcoin_hashes::Hash as BitcoinHash;
@@ -26,7 +26,6 @@ use bitcoin::secp256k1::{rand, Message, Scalar, Secp256k1, SecretKey, Signing, V
 use bitcoin::WitnessVersion::V1;
 use bitcoin::{Address, Amount, ScriptBuf, TxOut, XOnlyPublicKey};
 use rustreexo::accumulator::pollard::Pollard;
-use serde::Serialize;
 use Payload::WitnessProgram;
 
 fn gen_keypair<C: Signing>(secp: &Secp256k1<C>) -> Keypair {
@@ -189,7 +188,7 @@ fn main() {
             }
         }
         Err(e) => {
-            writeln!(std::io::stderr(), "{}: {}", e, args.utxoset_file);
+            _ = writeln!(std::io::stderr(), "{}: {}", e, args.utxoset_file);
             return;
         }
     }

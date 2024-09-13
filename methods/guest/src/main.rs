@@ -1,4 +1,3 @@
-use std::vec;
 use std::str::FromStr;
 
 use risc0_zkvm::guest::env;
@@ -7,13 +6,11 @@ use rustreexo::accumulator::proof::Proof;
 use rustreexo::accumulator::stump::Stump;
 use sha2::{Digest, Sha512_256};
 
-use bitcoin::hashes::Hash;
 use bitcoin::XOnlyPublicKey;
 use bitcoin::consensus::encode::serialize;
-use bitcoin::secp256k1::{Secp256k1, Message, Scalar};
+use bitcoin::secp256k1::{Secp256k1, Scalar};
 use bitcoin::secp256k1::schnorr::Signature;
-use bitcoin::TapSighash;
-use bitcoin::{TapTweakHash, ScriptBuf, TxOut, Amount};
+use bitcoin::{ScriptBuf, TxOut, Amount};
 
 fn main() {
     let secp = Secp256k1::verification_only();
