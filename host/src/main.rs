@@ -14,7 +14,7 @@ use clap::Parser;
 use txoutset::{ComputeAddresses, Dump};
 
 use std::str::FromStr;
-
+use std::time::SystemTime;
 use rustreexo::accumulator::node_hash::NodeHash;
 use rustreexo::accumulator::stump::Stump;
 
@@ -146,12 +146,14 @@ fn main() {
     let digest = sha256::Hash::hash(msg_to_sign.as_bytes());
     let msg = Message::from_digest(digest.to_byte_array());
 
+    let startTime = SystemTime::now();
+
     // If not proving, simply verify the passed receipt using the loaded utxo set.
     if !args.prove {
         let receipt: Receipt = bincode::deserialize_from(receipt_file).unwrap();
         let s: Stump = bincode::deserialize_from(stump_file).unwrap();
         verify_receipt(secp, &receipt, &s, msg);
-        println!("receipt verified!");
+        println!("receipt verified in {:?}", startTime.elapsed().unwrap());
         return;
     }
 
@@ -211,6 +213,8 @@ fn main() {
         }
     }
 
+    println!("Reading UTXO dump took {:?}", startTime.elapsed().unwrap());
+
     let roots = p
         .get_roots()
         .iter()
@@ -244,6 +248,7 @@ fn main() {
     // Sign using the tweaked key.
     let sig = secp.sign_schnorr(&msg, &blinded_key);
 
+    let startTime = SystemTime::now();
     let env = ExecutorEnv::builder()
         .write(&s)
         .unwrap()
@@ -264,6 +269,7 @@ fn main() {
     // Proof information by proving the specified ELF binary.
     // This struct contains the receipt along with statistics about execution of the guest
     let prove_info = prover.prove(env, METHOD_ELF).unwrap();
+    println!("Proving took {:?}", startTime.elapsed().unwrap());
 
     // extract the receipt.
     let receipt = prove_info.receipt;
