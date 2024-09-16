@@ -85,8 +85,11 @@ The proof can be verified using
 $ cargo run --release -- --msg "messsage to sign" --receipt-file receipt.bin --utreexo-file utreexo_stump.bin 
 ```
 
-## Benchmarks
-TODO: proving time and proof size.
+## Benchmarks, Apple M1 Max
+- Proving time is about 5:50 minutes (not counting loading the UTXO set into
+  memory).
+- Verification time is ~250 ms.
+- Proof size is 1.4 MB.
 
 ## Limitations
 This is a rough first draft of how a tool like this could look like. It has
