@@ -33,16 +33,7 @@ fn gen_keypair<C: Signing>(secp: &Secp256k1<C>) -> Keypair {
     Keypair::from_secret_key(secp, &sk)
 }
 
-/// Parse the UTXO set dump file and output each entry as CSV
-///
-/// Each line of the output has the following columns:
-///
-/// - Out Point (txid:vout)
-/// - Is Coinbase (0 - no, 1 - yes)
-/// - Block Height
-/// - Amount (satoshis)
-/// - Script Public Key
-/// - [optional] Address (specify -a)
+/// utxozkp
 #[derive(Debug, Parser)]
 #[command(verbatim_doc_comment)]
 struct Args {
