@@ -24,7 +24,7 @@ use bitcoin::key::Keypair;
 use bitcoin::secp256k1::schnorr::Signature;
 use bitcoin::secp256k1::{rand, Message, Scalar, Secp256k1, SecretKey, Signing, Verification};
 use bitcoin::WitnessVersion::V1;
-use bitcoin::{Address, Amount, ScriptBuf, TxOut, XOnlyPublicKey};
+use bitcoin::{Address, Amount, Network, ScriptBuf, TxOut, XOnlyPublicKey};
 use rustreexo::accumulator::pollard::Pollard;
 use Payload::WitnessProgram;
 
@@ -59,6 +59,11 @@ struct Args {
     /// this blank if verifying a receipt.
     #[arg(short, long)]
     priv_key: Option<String>,
+
+
+    /// Network to use.
+    #[arg(long, default_value_t = Network::Testnet)]
+    network: Network,
 }
 
 fn create_nodehash(script_buf: ScriptBuf) -> NodeHash {
@@ -89,7 +94,7 @@ fn main() {
     let args = Args::parse();
 
     let secp = Secp256k1::new();
-    let network = txoutset::Network::Testnet;
+    let network = args.network;
 
     // Generate a new keypair or use the given private key.
     let keypair = match args.priv_key.as_deref() {
@@ -137,14 +142,14 @@ fn main() {
     let digest = sha256::Hash::hash(msg_to_sign.as_bytes());
     let msg = Message::from_digest(digest.to_byte_array());
 
-    let startTime = SystemTime::now();
+    let start_time = SystemTime::now();
 
     // If not proving, simply verify the passed receipt using the loaded utxo set.
     if !args.prove {
         let receipt: Receipt = bincode::deserialize_from(receipt_file).unwrap();
         let s: Stump = bincode::deserialize_from(stump_file).unwrap();
         verify_receipt(secp, &receipt, &s, msg);
-        println!("receipt verified in {:?}", startTime.elapsed().unwrap());
+        println!("receipt verified in {:?}", start_time.elapsed().unwrap());
         return;
     }
 
@@ -204,7 +209,7 @@ fn main() {
         }
     }
 
-    println!("Reading UTXO dump took {:?}", startTime.elapsed().unwrap());
+    println!("Reading UTXO dump took {:?}", start_time.elapsed().unwrap());
 
     let roots = p
         .get_roots()
@@ -239,7 +244,7 @@ fn main() {
     // Sign using the tweaked key.
     let sig = secp.sign_schnorr(&msg, &blinded_key);
 
-    let startTime = SystemTime::now();
+    let start_time = SystemTime::now();
     let env = ExecutorEnv::builder()
         .write(&s)
         .unwrap()
@@ -260,7 +265,7 @@ fn main() {
     // Proof information by proving the specified ELF binary.
     // This struct contains the receipt along with statistics about execution of the guest
     let prove_info = prover.prove(env, METHOD_ELF).unwrap();
-    println!("Proving took {:?}", startTime.elapsed().unwrap());
+    println!("Proving took {:?}", start_time.elapsed().unwrap());
 
     // extract the receipt.
     let receipt = prove_info.receipt;
