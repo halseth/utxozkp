@@ -11,7 +11,7 @@ Examples are:
 - Lightning channel announcements: prove the channel exist without revealing
   it.
 - Proof-of-reserves: prove you control a certain amount of coins without
-  reealing which ones.
+  revealing which ones.
 - etc
 
 ## Architecture 
