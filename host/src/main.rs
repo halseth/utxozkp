@@ -13,10 +13,10 @@ use bitcoin_hashes::Hash as BitcoinHash;
 use clap::Parser;
 use txoutset::{ComputeAddresses, Dump};
 
-use std::str::FromStr;
-use std::time::SystemTime;
 use rustreexo::accumulator::node_hash::NodeHash;
 use rustreexo::accumulator::stump::Stump;
+use std::str::FromStr;
+use std::time::SystemTime;
 
 use bitcoin::address::Payload;
 use bitcoin::consensus::encode::serialize;
@@ -59,7 +59,6 @@ struct Args {
     /// this blank if verifying a receipt.
     #[arg(short, long)]
     priv_key: Option<String>,
-
 
     /// Network to use.
     #[arg(long, default_value_t = Network::Testnet)]
@@ -153,7 +152,6 @@ fn main() {
         return;
     }
 
-
     // Our Utreexo accumulator.
     let mut p = Pollard::new();
 
@@ -225,6 +223,7 @@ fn main() {
 
     // We will prove inclusion in the UTXO set of the key we control.
     let (internal_key, _parity) = keypair.unwrap().x_only_public_key();
+    let priv_key = keypair.unwrap().secret_key();
     let script_pubkey = ScriptBuf::new_p2tr(&secp, internal_key, None);
     let myhash = create_nodehash(script_pubkey);
 
@@ -239,18 +238,21 @@ fn main() {
     // To avoid leaking the key we are signing for, we tweak it using a random value.
     let rnd = SecretKey::new(&mut rand::thread_rng());
     let blinding_scalar = Scalar::from_be_bytes(rnd.secret_bytes()).unwrap();
-    let blinded_key = keypair.unwrap().add_xonly_tweak(&secp, &blinding_scalar).unwrap();
+    let blinded_key = keypair
+        .unwrap()
+        .add_xonly_tweak(&secp, &blinding_scalar)
+        .unwrap();
 
     // Sign using the tweaked key.
     let sig = secp.sign_schnorr(&msg, &blinded_key);
 
     let start_time = SystemTime::now();
     let env = ExecutorEnv::builder()
+        .write(&priv_key)
+        .unwrap()
         .write(&s)
         .unwrap()
         .write(&proof)
-        .unwrap()
-        .write(&internal_key)
         .unwrap()
         .write(&blinding_scalar.to_be_bytes())
         .unwrap()
@@ -280,8 +282,12 @@ fn main() {
 }
 
 fn verify_receipt<C: Verification>(secp: Secp256k1<C>, receipt: &Receipt, s: &Stump, msg: Message) {
-    let (receipt_stump, receipt_sig, receipt_pubkey): (Stump, Signature, XOnlyPublicKey) =
-        receipt.journal.decode().unwrap();
+    let (receipt_stump, receipt_sig, receipt_pubkey, sk_hash): (
+        Stump,
+        Signature,
+        XOnlyPublicKey,
+        String,
+    ) = receipt.journal.decode().unwrap();
 
     assert_eq!(&receipt_stump, s, "stumps not equal");
 
@@ -295,4 +301,5 @@ fn verify_receipt<C: Verification>(secp: Secp256k1<C>, receipt: &Receipt, s: &St
     // The receipt was verified at the end of proving, but the below code is an
     // example of how someone else could verify this receipt.
     receipt.verify(METHOD_ID).unwrap();
+    println!("priv key hash {}", sk_hash);
 }
