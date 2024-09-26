@@ -23,7 +23,6 @@ fn main() {
     let priv_key: SecretKey = env::read();
     let s: Stump = env::read();
     let proof: Proof = env::read();
-    let blinding_bytes: [u8; 32] = env::read();
     let signature: Signature = env::read();
 
     let keypair = Keypair::from_secret_key(&secp, &priv_key);
@@ -50,12 +49,8 @@ fn main() {
     hasher.update(&priv_key.secret_bytes());
     let sk_hash = hex::encode(hasher.finalize());
 
-    // Blind the public key before commiting it to the public inputs.
-    let blinding_scalar = Scalar::from_be_bytes(blinding_bytes).unwrap();
-    let blinded_pubkey = internal_key.add_tweak(&secp, &blinding_scalar).unwrap().0;
-
-    let blinded_pub_bytes = blinded_pubkey.serialize();
-    let verifying_key = schnorr::VerifyingKey::from_bytes(&blinded_pub_bytes).unwrap();
+    let pub_bytes = internal_key.serialize();
+    let verifying_key = schnorr::VerifyingKey::from_bytes(&pub_bytes).unwrap();
 
     let sig_bytes = signature.serialize();
     let schnorr_sig = schnorr::Signature::try_from(sig_bytes.as_slice()).unwrap();
@@ -66,7 +61,5 @@ fn main() {
 
     // write public output to the journal
     env::commit(&s);
-    env::commit(&signature);
-    env::commit(&blinded_pubkey);
     env::commit(&sk_hash);
 }

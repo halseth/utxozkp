@@ -239,31 +239,21 @@ fn main() {
     assert_eq!(s.verify(&proof, &[myhash]), Ok(true));
     println!("stump proof verified");
 
-    // To avoid leaking the key we are signing for, we tweak it using a random value.
-    let rnd = SecretKey::new(&mut rand::thread_rng());
-    let blinding_scalar = Scalar::from_be_bytes(rnd.secret_bytes()).unwrap();
-    let blinded_key = keypair
-        .unwrap()
-        .add_xonly_tweak(&secp, &blinding_scalar)
-        .unwrap();
-
     // Sign using the tweaked key.
-    let sig = secp.sign_schnorr(&msg, &blinded_key);
+    let sig = secp.sign_schnorr(&msg, &keypair.unwrap());
 
     // Verify signature.
-    let (blinded_pub , _) = blinded_key.x_only_public_key();
-    println!("blinded pubkey: {}", blinded_pub);
+    let (pubkey, _) = keypair.unwrap().x_only_public_key();
+    println!("pubkey: {}", pubkey);
 
     let sig_bytes = sig.serialize();
     println!("secp signature: {}", hex::encode(sig_bytes));
-    secp.verify_schnorr(&sig, &msg, &blinded_pub).expect("secp verification failed");
+    secp.verify_schnorr(&sig, &msg, &pubkey).expect("secp verification failed");
 
-    let blinded_pub_y = blinded_key.public_key();
-    let blinded_pub_y_bytes = blinded_pub_y.serialize();
-    let blinded_pub_bytes = blinded_pub.serialize();
+    let pub_bytes = pubkey.serialize();
 
     println!("creating verifying key");
-    let verifying_key = schnorr::VerifyingKey::from_bytes(&blinded_pub_bytes).unwrap();
+    let verifying_key = schnorr::VerifyingKey::from_bytes(&pub_bytes).unwrap();
     println!("created verifying key: {}", hex::encode(verifying_key.to_bytes()));
 
     let schnorr_sig = schnorr::Signature::try_from(sig_bytes.as_slice()).unwrap();
@@ -282,8 +272,6 @@ fn main() {
         .write(&s)
         .unwrap()
         .write(&proof)
-        .unwrap()
-        .write(&blinding_scalar.to_be_bytes())
         .unwrap()
         .write(&sig)
         .unwrap()
@@ -311,21 +299,9 @@ fn main() {
 }
 
 fn verify_receipt<C: Verification>(secp: Secp256k1<C>, receipt: &Receipt, s: &Stump, msg: Message) {
-    let (receipt_stump, receipt_sig, receipt_pubkey, sk_hash): (
-        Stump,
-        Signature,
-        XOnlyPublicKey,
-        String,
-    ) = receipt.journal.decode().unwrap();
+    let (receipt_stump, sk_hash): (Stump, String) = receipt.journal.decode().unwrap();
 
     assert_eq!(&receipt_stump, s, "stumps not equal");
-
-    // Check that the signature is valid using the key from the receipt.
-    assert_eq!(
-        secp.verify_schnorr(&receipt_sig, &msg, &receipt_pubkey),
-        Ok(()),
-        "invalid signature"
-    );
 
     // The receipt was verified at the end of proving, but the below code is an
     // example of how someone else could verify this receipt.
