@@ -12,11 +12,14 @@ use bitcoin::consensus::encode::serialize;
 use bitcoin::secp256k1::{Secp256k1, Scalar, SecretKey};
 use bitcoin::secp256k1::schnorr::Signature;
 use bitcoin::{ScriptBuf, TxOut, Amount};
+use k256::schnorr;
+use k256::schnorr::signature::Verifier;
 
 fn main() {
     let secp = Secp256k1::new();
 
     // read the input
+    let msg_bytes: Vec<u8> = env::read();
     let priv_key: SecretKey = env::read();
     let s: Stump = env::read();
     let proof: Proof = env::read();
@@ -50,6 +53,16 @@ fn main() {
     // Blind the public key before commiting it to the public inputs.
     let blinding_scalar = Scalar::from_be_bytes(blinding_bytes).unwrap();
     let blinded_pubkey = internal_key.add_tweak(&secp, &blinding_scalar).unwrap().0;
+
+    let blinded_pub_bytes = blinded_pubkey.serialize();
+    let verifying_key = schnorr::VerifyingKey::from_bytes(&blinded_pub_bytes).unwrap();
+
+    let sig_bytes = signature.serialize();
+    let schnorr_sig = schnorr::Signature::try_from(sig_bytes.as_slice()).unwrap();
+
+    verifying_key
+        .verify(msg_bytes.as_slice(), &schnorr_sig)
+        .expect("schnorr verification failed");
 
     // write public output to the journal
     env::commit(&s);

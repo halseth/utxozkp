@@ -25,6 +25,8 @@ use bitcoin::secp256k1::schnorr::Signature;
 use bitcoin::secp256k1::{rand, Message, Scalar, Secp256k1, SecretKey, Signing, Verification};
 use bitcoin::WitnessVersion::V1;
 use bitcoin::{Address, Amount, Network, ScriptBuf, TxOut, XOnlyPublicKey};
+use k256::schnorr;
+use k256::schnorr::signature::Verifier;
 use rustreexo::accumulator::pollard::Pollard;
 use Payload::WitnessProgram;
 
@@ -138,8 +140,10 @@ fn main() {
     };
 
     let msg_to_sign = args.msg.unwrap();
-    let digest = sha256::Hash::hash(msg_to_sign.as_bytes());
-    let msg = Message::from_digest(digest.to_byte_array());
+    let msg_bytes = msg_to_sign.as_bytes();
+    let digest = sha256::Hash::hash(msg_bytes);
+    let digest_bytes = digest.to_byte_array();
+    let msg = Message::from_digest(digest_bytes);
 
     let start_time = SystemTime::now();
 
@@ -246,8 +250,33 @@ fn main() {
     // Sign using the tweaked key.
     let sig = secp.sign_schnorr(&msg, &blinded_key);
 
+    // Verify signature.
+    let (blinded_pub , _) = blinded_key.x_only_public_key();
+    println!("blinded pubkey: {}", blinded_pub);
+
+    let sig_bytes = sig.serialize();
+    println!("secp signature: {}", hex::encode(sig_bytes));
+    secp.verify_schnorr(&sig, &msg, &blinded_pub).expect("secp verification failed");
+
+    let blinded_pub_y = blinded_key.public_key();
+    let blinded_pub_y_bytes = blinded_pub_y.serialize();
+    let blinded_pub_bytes = blinded_pub.serialize();
+
+    println!("creating verifying key");
+    let verifying_key = schnorr::VerifyingKey::from_bytes(&blinded_pub_bytes).unwrap();
+    println!("created verifying key: {}", hex::encode(verifying_key.to_bytes()));
+
+    let schnorr_sig = schnorr::Signature::try_from(sig_bytes.as_slice()).unwrap();
+    println!("schnorr signature: {}", hex::encode(schnorr_sig.to_bytes()));
+
+    verifying_key
+        .verify(msg_bytes, &schnorr_sig)
+        .expect("schnorr verification failed");
+
     let start_time = SystemTime::now();
     let env = ExecutorEnv::builder()
+        .write(&msg_bytes)
+        .unwrap()
         .write(&priv_key)
         .unwrap()
         .write(&s)
