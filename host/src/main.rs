@@ -21,10 +21,9 @@ use std::time::SystemTime;
 use bitcoin::address::Payload;
 use bitcoin::consensus::encode::serialize;
 use bitcoin::key::Keypair;
-use bitcoin::secp256k1::schnorr::Signature;
-use bitcoin::secp256k1::{rand, Message, Scalar, Secp256k1, SecretKey, Signing, Verification};
+use bitcoin::secp256k1::{rand, Message, Secp256k1, SecretKey, Signing};
 use bitcoin::WitnessVersion::V1;
-use bitcoin::{Address, Amount, Network, ScriptBuf, TxOut, XOnlyPublicKey};
+use bitcoin::{Address, Amount, Network, ScriptBuf, TxOut};
 use k256::schnorr;
 use k256::schnorr::signature::Verifier;
 use rustreexo::accumulator::pollard::Pollard;
@@ -151,7 +150,7 @@ fn main() {
     if !args.prove {
         let receipt: Receipt = bincode::deserialize_from(receipt_file).unwrap();
         let s: Stump = bincode::deserialize_from(stump_file).unwrap();
-        verify_receipt(secp, &receipt, &s, msg);
+        verify_receipt(&receipt, &s);
         println!("receipt verified in {:?}", start_time.elapsed().unwrap());
         return;
     }
@@ -227,7 +226,8 @@ fn main() {
 
     // We will prove inclusion in the UTXO set of the key we control.
     let (internal_key, _parity) = keypair.unwrap().x_only_public_key();
-    let priv_key = keypair.unwrap().secret_key();
+    let priv_bytes = keypair.unwrap().secret_key().secret_bytes();
+    let priv_key = schnorr::SigningKey::from_bytes(&priv_bytes).unwrap();
     let script_pubkey = ScriptBuf::new_p2tr(&secp, internal_key, None);
     let myhash = create_nodehash(script_pubkey);
 
@@ -273,7 +273,7 @@ fn main() {
         .unwrap()
         .write(&proof)
         .unwrap()
-        .write(&sig)
+        .write(&sig_bytes.as_slice())
         .unwrap()
         .build()
         .unwrap();
@@ -289,7 +289,7 @@ fn main() {
     // extract the receipt.
     let receipt = prove_info.receipt;
 
-    verify_receipt(secp, &receipt, &s, msg);
+    verify_receipt(&receipt, &s);
 
     let receipt_bytes = bincode::serialize(&receipt).unwrap();
     println!("receipt ({})", receipt_bytes.len(),);
@@ -298,7 +298,7 @@ fn main() {
     bincode::serialize_into(stump_file, &s).unwrap();
 }
 
-fn verify_receipt<C: Verification>(secp: Secp256k1<C>, receipt: &Receipt, s: &Stump, msg: Message) {
+fn verify_receipt(receipt: &Receipt, s: &Stump) {
     let (receipt_stump, sk_hash): (Stump, String) = receipt.journal.decode().unwrap();
 
     assert_eq!(&receipt_stump, s, "stumps not equal");
