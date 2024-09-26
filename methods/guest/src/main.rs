@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::str::{from_utf8, FromStr};
 
 use risc0_zkvm::guest::env;
 use rustreexo::accumulator::node_hash::NodeHash;
@@ -7,27 +7,27 @@ use rustreexo::accumulator::stump::Stump;
 use sha2::{Digest, Sha512_256};
 
 use bitcoin::XOnlyPublicKey;
-use bitcoin::key::Keypair;
 use bitcoin::consensus::encode::serialize;
-use bitcoin::secp256k1::{Secp256k1, Scalar, SecretKey};
-use bitcoin::secp256k1::schnorr::Signature;
+use bitcoin::secp256k1::Secp256k1;
 use bitcoin::{ScriptBuf, TxOut, Amount};
+use k256::schnorr;
+use k256::schnorr::signature::Verifier;
 
 fn main() {
-    let secp = Secp256k1::new();
+    let secp = Secp256k1::verification_only();
 
     // read the input
-    let priv_key: SecretKey = env::read();
+    let msg_bytes: Vec<u8> = env::read();
+    let priv_key: schnorr::SigningKey = env::read();
     let s: Stump = env::read();
     let proof: Proof = env::read();
-    let blinding_bytes: [u8; 32] = env::read();
-    let signature: Signature = env::read();
+    let sig_bytes: Vec<u8> = env::read();
 
-    let keypair = Keypair::from_secret_key(&secp, &priv_key);
-    let (internal_key, _) = keypair.x_only_public_key();
+    let internal_key = priv_key.verifying_key();
 
     // We'll check that the given public key corresponds to an output in the utxo set.
-    let script_pubkey = ScriptBuf::new_p2tr(&secp, internal_key, None);
+    let pubx = XOnlyPublicKey::from_slice(internal_key.to_bytes().as_slice()).unwrap();
+    let script_pubkey = ScriptBuf::new_p2tr(&secp, pubx, None);
     let utxo = TxOut {
         value: Amount::ZERO,
         script_pubkey,
@@ -44,16 +44,18 @@ fn main() {
     assert_eq!(s.verify(&proof, &[myhash]), Ok(true));
 
     let mut hasher = Sha512_256::new();
-    hasher.update(&priv_key.secret_bytes());
+    hasher.update(&priv_key.to_bytes());
     let sk_hash = hex::encode(hasher.finalize());
+    let msg = from_utf8(msg_bytes.as_slice()).unwrap();
 
-    // Blind the public key before commiting it to the public inputs.
-    let blinding_scalar = Scalar::from_be_bytes(blinding_bytes).unwrap();
-    let blinded_pubkey = internal_key.add_tweak(&secp, &blinding_scalar).unwrap().0;
+    let schnorr_sig = schnorr::Signature::try_from(sig_bytes.as_slice()).unwrap();
+
+    internal_key
+        .verify(msg_bytes.as_slice(), &schnorr_sig)
+        .expect("schnorr verification failed");
 
     // write public output to the journal
     env::commit(&s);
-    env::commit(&signature);
-    env::commit(&blinded_pubkey);
     env::commit(&sk_hash);
+    env::commit(&msg);
 }
