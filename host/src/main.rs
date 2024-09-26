@@ -138,12 +138,6 @@ fn main() {
         (r, s)
     };
 
-    let msg_to_sign = args.msg.unwrap();
-    let msg_bytes = msg_to_sign.as_bytes();
-    let digest = sha256::Hash::hash(msg_bytes);
-    let digest_bytes = digest.to_byte_array();
-    let msg = Message::from_digest(digest_bytes);
-
     let start_time = SystemTime::now();
 
     // If not proving, simply verify the passed receipt using the loaded utxo set.
@@ -154,6 +148,12 @@ fn main() {
         println!("receipt verified in {:?}", start_time.elapsed().unwrap());
         return;
     }
+
+    let msg_to_sign = args.msg.unwrap();
+    let msg_bytes = msg_to_sign.as_bytes();
+    let digest = sha256::Hash::hash(msg_bytes);
+    let digest_bytes = digest.to_byte_array();
+    let msg = Message::from_digest(digest_bytes);
 
     // Our Utreexo accumulator.
     let mut p = Pollard::new();
@@ -299,12 +299,13 @@ fn main() {
 }
 
 fn verify_receipt(receipt: &Receipt, s: &Stump) {
-    let (receipt_stump, sk_hash): (Stump, String) = receipt.journal.decode().unwrap();
+    let (receipt_stump, sk_hash, msg): (Stump, String, String) = receipt.journal.decode().unwrap();
 
     assert_eq!(&receipt_stump, s, "stumps not equal");
 
     // The receipt was verified at the end of proving, but the below code is an
     // example of how someone else could verify this receipt.
     receipt.verify(METHOD_ID).unwrap();
-    println!("priv key hash {}", sk_hash);
+    println!("priv key hash: {}", sk_hash);
+    println!("signed msg: {}", msg);
 }

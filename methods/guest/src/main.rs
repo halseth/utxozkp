@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::str::{from_utf8, FromStr};
 
 use risc0_zkvm::guest::env;
 use rustreexo::accumulator::node_hash::NodeHash;
@@ -46,6 +46,7 @@ fn main() {
     let mut hasher = Sha512_256::new();
     hasher.update(&priv_key.to_bytes());
     let sk_hash = hex::encode(hasher.finalize());
+    let msg = from_utf8(msg_bytes.as_slice()).unwrap();
 
     let schnorr_sig = schnorr::Signature::try_from(sig_bytes.as_slice()).unwrap();
 
@@ -56,4 +57,5 @@ fn main() {
     // write public output to the journal
     env::commit(&s);
     env::commit(&sk_hash);
+    env::commit(&msg);
 }
