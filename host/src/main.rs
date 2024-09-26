@@ -6,7 +6,6 @@ use risc0_zkvm::{default_prover, ExecutorEnv, Receipt};
 
 use sha2::{Digest, Sha512_256};
 use std::io::Write;
-
 use bitcoin_hashes::sha256;
 use bitcoin_hashes::Hash as BitcoinHash;
 
@@ -20,11 +19,13 @@ use std::time::SystemTime;
 
 use bitcoin::address::Payload;
 use bitcoin::consensus::encode::serialize;
-use bitcoin::key::Keypair;
-use bitcoin::secp256k1::{rand, Message, Secp256k1, SecretKey, Signing};
+use bitcoin::key::{Keypair, UntweakedPublicKey};
+use bitcoin::secp256k1::{rand, Message, Parity, Secp256k1, SecretKey, Signing, Verification};
 use bitcoin::WitnessVersion::V1;
-use bitcoin::{Address, Amount, Network, ScriptBuf, TxOut};
-use k256::schnorr;
+use bitcoin::{Address, Amount, Network, ScriptBuf, TapNodeHash, TapTweakHash, TxOut, WitnessVersion, XOnlyPublicKey};
+use bitcoin::script::{Builder, PushBytes};
+use k256::{schnorr};
+use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::schnorr::signature::Verifier;
 use rustreexo::accumulator::pollard::Pollard;
 use Payload::WitnessProgram;
@@ -85,6 +86,59 @@ fn create_nodehash(script_buf: ScriptBuf) -> NodeHash {
     hash
 }
 
+pub fn new_p2tr<C: Verification>(
+    secp: &Secp256k1<C>,
+    internal_key: UntweakedPublicKey,
+    merkle_root: Option<TapNodeHash>,
+) -> ScriptBuf {
+    let (output_key, _) = tap_tweak(secp, internal_key, merkle_root);
+    // output key is 32 bytes long, so it's safe to use `new_witness_program_unchecked` (Segwitv1)
+    new_witness_program_unchecked(WitnessVersion::V1, output_key.serialize())
+}
+
+fn new_witness_program_unchecked<T: AsRef<PushBytes>>(
+    version: WitnessVersion,
+    program: T,
+) -> ScriptBuf {
+    let program = program.as_ref();
+    debug_assert!(program.len() >= 2 && program.len() <= 40);
+    // In segwit v0, the program must be 20 or 32 bytes long.
+    debug_assert!(version != WitnessVersion::V0 || program.len() == 20 || program.len() == 32);
+    Builder::new().push_opcode(version.into()).push_slice(program).into_script()
+}
+
+
+fn tap_tweak<C: Verification>(
+    secp: &Secp256k1<C>,
+    internal_key: UntweakedPublicKey,
+    merkle_root: Option<TapNodeHash>,
+) -> (XOnlyPublicKey, Parity) {
+    let tweak = TapTweakHash::from_key_and_tweak(internal_key, merkle_root).to_scalar();
+    let (output_key, parity) = internal_key.add_tweak(secp, &tweak).expect("Tap tweak failed");
+
+    let pub_bytes = internal_key.serialize();
+    let pub_key : k256::PublicKey = schnorr::VerifyingKey::from_bytes(&pub_bytes).unwrap().into();
+    let pub_point = pub_key.to_projective();
+
+    let tweak_bytes = &tweak.to_be_bytes();
+    let tweak_point = k256::SecretKey::from_bytes(tweak_bytes.into()).unwrap().public_key().to_projective();
+
+    let tweaked_point = pub_point + tweak_point;
+    let compressed = tweaked_point.to_encoded_point(true);
+    let x_coordinate = compressed.x().unwrap();
+
+    let ver_key = schnorr::VerifyingKey::from_bytes(&x_coordinate).unwrap();
+
+    println!("tweaked_pk: {}", hex::encode(ver_key.to_bytes()));
+    println!("output_key: {}", output_key);
+    assert_eq!(hex::encode(ver_key.to_bytes()), output_key.to_string());
+
+    let pubx = XOnlyPublicKey::from_slice(ver_key.to_bytes().as_slice()).unwrap();
+
+    (pubx, parity)
+}
+
+
 fn main() {
     // Initialize tracing. In order to view logs, run `RUST_LOG=info cargo run`
     tracing_subscriber::fmt()
@@ -107,7 +161,7 @@ fn main() {
             };
 
             let (internal_key, _parity) = keypair.x_only_public_key();
-            let script_buf = ScriptBuf::new_p2tr(&secp, internal_key, None);
+            let script_buf = new_p2tr(&secp, internal_key, None);
             let addr = Address::from_script(script_buf.as_script(), network).unwrap();
             println!("priv: {}", hex::encode(keypair.secret_key().secret_bytes()));
             println!("pub: {}", internal_key);
@@ -228,7 +282,7 @@ fn main() {
     let (internal_key, _parity) = keypair.unwrap().x_only_public_key();
     let priv_bytes = keypair.unwrap().secret_key().secret_bytes();
     let priv_key = schnorr::SigningKey::from_bytes(&priv_bytes).unwrap();
-    let script_pubkey = ScriptBuf::new_p2tr(&secp, internal_key, None);
+    let script_pubkey = new_p2tr(&secp, internal_key, None);
     let myhash = create_nodehash(script_pubkey);
 
     println!("proving {}", myhash);
