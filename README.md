@@ -20,25 +20,18 @@ create a [Utreexo](https://dci.mit.edu/utreexo) representation of the UTXO set
 and a proof for inclusion of the given UTXO in this set.
 
 The prover then signs a message using the private key for the output with
-public key `P`, proving that he controls the coins. In order to not have this
-signature reveal which output it signs for, we have the prover tweak the key
-with a random value before signing.
+public key `P`, proving that he controls the coins. 
 
 The prover then creates a ZK-STARK proof using the [Risc0 ZKVM](https://github.com/risc0/risc0) 
 that proves the following:
 
-- The prover has a public key `P` and a blinding value `b` that together forms
-  the tweaked key `P' = P + b*G`. `P'` is shown to the verifier.
+- The prover has a valid signature for an arbitrary message for a public key
+  `P`, where `P = x * G`. The message and `hash(x)`is shown to the verifier.
 - The prover has a proof showing that the public key P is found in the Utreexo
   set. The Utreexo root is shown to the verifier.
 
-In addition the verifier is given a signature S that signs a message M for the
-key `P'`. Together with the STARK proof this is convincing the verifier that
-the prover has the private key to the output in the UTXO set.
-
-Note that in theory we could also have done the signature check itself in the
-ZKVM, but signature checks are expensive in that environment, and needs more
-work to be practical.
+The STARK proof this is convincing the verifier that the prover has the private
+key to the output in the UTXO set.
 
 ## Quick start
 
@@ -86,10 +79,10 @@ $ cargo run --release -- --msg "messsage to sign" --receipt-file receipt.bin --u
 ```
 
 ## Benchmarks, Apple M1 Max
-- Proving time is about 6:57 minutes (not counting loading the UTXO set into
+- Proving time is about 48 seconds (not counting loading the UTXO set into
   memory).
-- Verification time is ~300 ms.
-- Proof size is 1.7 MB.
+- Verification time is ~254 ms.
+- Proof size is 1.4 MB.
 
 ## Limitations
 This is a rough first draft of how a tool like this could look like. It has
@@ -99,7 +92,7 @@ controlling real (mainnet) coins.
 A non-exhaustive list (some of these could be relatively easy to fix):
 
 - Only supports taproot keyspend outputs.
-- Only supports testnet3.
+- Only supports testnet3 and signet.
 - Only proving existence, selectively revealing more about the output is not
   supported.
 - Proving time is not optimized.

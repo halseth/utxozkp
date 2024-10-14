@@ -16,3 +16,4 @@ clap = { version = "4.5.16", features = ["derive"] }
 txoutset = "0.3.0"
 sha2 = "0.10.8"
 bitcoin_hashes = "0.14.0"
+k256 = { version = "0.13.3", features = ["serde"] }
