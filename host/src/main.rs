@@ -248,13 +248,17 @@ fn main() {
 
     let sig_bytes = sig.serialize();
     println!("secp signature: {}", hex::encode(sig_bytes));
-    secp.verify_schnorr(&sig, &msg, &pubkey).expect("secp verification failed");
+    secp.verify_schnorr(&sig, &msg, &pubkey)
+        .expect("secp verification failed");
 
     let pub_bytes = pubkey.serialize();
 
     println!("creating verifying key");
     let verifying_key = schnorr::VerifyingKey::from_bytes(&pub_bytes).unwrap();
-    println!("created verifying key: {}", hex::encode(verifying_key.to_bytes()));
+    println!(
+        "created verifying key: {}",
+        hex::encode(verifying_key.to_bytes())
+    );
 
     let schnorr_sig = schnorr::Signature::try_from(sig_bytes.as_slice()).unwrap();
     println!("schnorr signature: {}", hex::encode(schnorr_sig.to_bytes()));
