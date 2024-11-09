@@ -1,5 +1,5 @@
-# utxozkp
-`utxozkp` is a proof of concept tool for proving Bitcoin UTXO set inclusion in
+# OutputZero
+`OutputZero` is a proof of concept tool for proving Bitcoin UTXO set inclusion in
 zero knowledge.
 
 ## Applications 
